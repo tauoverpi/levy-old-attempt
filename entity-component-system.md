@@ -1,5 +1,15 @@
 ---
 title: Entity Component System Module
+header-includes: |
+  \newcommand{\hidden}[1]{}
+  <style>
+    .codeblock-tag {
+        text-align: center;
+        text-decoration: underline;
+    }
+  </style>
+abstract: |
+    We define an entity-component-system with archetype storage with compile-time specialization.
 ...
 
     lang: zig esc: [[]] file: src/aecs.zig
@@ -81,13 +91,13 @@ of one of the components.
         [[Deriving archetypes]]
         [[Archetypes without data]]
         [[Recovering component indices from Archetypes]]
-        [[Archetype membership & subtypes]]
+        [[Archetype membership and subtypes]]
     };
 
 ## Subtypes and membership
 
-    lang: zig esc: none tag: #Archetype membership & subtypes
-    ---------------------------------------------------------
+    lang: zig esc: none tag: #Archetype membership and subtypes
+    -----------------------------------------------------------
 
     pub fn has(self: Archetype, tag: Tag) bool {
         const bit = @as(Int, 1) << @enumToInt(tag);
