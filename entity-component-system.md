@@ -29,6 +29,57 @@ abstract: |
 
 # Entity
 
+![Entity overview](uml/img/aecs-entity.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-entity.uml
+    ---------------------------------------------
+
+    @startuml img/aecs-entity.png
+
+    graph G {
+        layout=dot
+        concentrate=false
+
+        node[shape=rectangle]
+
+        player
+        cart
+        waypoint
+        npc
+        bullet
+        light
+
+        subgraph cluster_0 {
+            label="components"
+            color="#aaaaaa"
+
+            position
+            velocity
+            acceleration
+            orientation
+            mass
+            health
+            mana
+            joystick
+            planner
+            intensity
+        }
+
+        player -- position, velocity, acceleration, orientation, mass, health, mana, joystick
+        cart -- position, velocity, acceleration, orientation, mass
+        waypoint -- position
+        position, velocity, acceleration, orientation, mass, health, mana, planner -- npc
+        position, velocity, acceleration -- bullet
+        position, orientation, intensity -- light
+    }
+
+    @enduml
+
+}
+
+
 Entity identifiers are represented by 32-bit integers dealt out by an `EntityManager` responsible for generating
 new identifiers as needed and reusing old identifiers returned to the manager.
 
@@ -164,7 +215,7 @@ indexing, a mask is constructed such that void components can be ignored.
 
 ## Component indices
 
-![](uml/img/aecs-component-indices.png)
+![Relation between bits within an archetype and component positions](uml/img/aecs-component-indices.png)
 
 \hidden{
 
@@ -178,15 +229,15 @@ indexing, a mask is constructed such that void components can be ignored.
     +-------------------------------+
     | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 1 |
     +---------+-------+---+-------+-+       storage layout
-              |       |   |       |    +----------------------+
-              |       |   |       +--->| Position component   |
-              |       |   |            +----------------------+
-              |       |   +----------->| Velocity component   |
-              |       |                +----------------------+
-              |       +--------------->| Gravity component    |
-              |                        +----------------------+
-              +----------------------->| Mass component       |
-                                       +----------------------+
+              |       |   |       |    +------------------------+
+              |       |   |       +--->| Position component     |
+              |       |   |            +------------------------+
+              |       |   +----------->| Velocity component     |
+              |       |                +------------------------+
+              |       +--------------->| Acceleration component |
+              |                        +------------------------+
+              +----------------------->| Mass component         |
+                                       +------------------------+
 
     @enduml
 
@@ -268,7 +319,7 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ## Component storage
 
-![](uml/img/aecs-component-storage.png)
+![Archetype storage overview](uml/img/aecs-component-storage.png)
 
 \hidden{
 
@@ -278,31 +329,30 @@ In combination with an index, archetypes are used to locate which bucket an enti
     @startuml img/aecs-component-storage.png
     ditaa
 
-    +--------+ key to  +-------------------+ index to
-    | Entity +-------->| archetype | index +---------+
-    +--------+         +-+-----------------+         |
-                         |                           |
-                         |                           v packed data (SoA)
-        reference to     |                 +-------------------------+
-       +-----------------+                 | x0 | x1 | x2 | ... | xn |
-       |               component      +----+-------------------------+
-       |     contains  +----------+   |    | y0 | y1 | y2 | ... | yn |
-       |    +--------->| Velocity +---+    +-------------------------+
-       |    |          +----------+                    packed data (SoA)
-       v    |                              +-------------------------+
-    +-------+-+ contains    +----------+   | x0 | x1 | x2 | ... | xn |
-    | Storage +------------>| Position +---+-------------------------+
-    +-------+-+             +----------+   | y0 | y1 | y2 | ... | yn |
-            |                              +-------------------------+
-            | contains +----------+                    packed data (SoA)
-            +--------->| Gravity  +---+    +-------------------------+
-                       +----------+   |    | x0 | x1 | x2 | ... | xn |
-                                      +----+-------------------------+
-                                           | y0 | y1 | y2 | ... | yn |
-                                           +-------------------------+
+    +--------+ key to  +-------------------+   index to
+    | Entity +-------->| archetype | index +-------------+
+    +--------+         +-+-----------------+             |
+                         |                               |
+                         |                               v packed data (SoA)
+        reference to     |                    +-------------------------+
+       +-----------------+                    | x0 | x1 | x2 | ... | xn |
+       |               component      +-------+-------------------------+
+       |     contains  +----------+   |       | y0 | y1 | y2 | ... | yn |
+       |    +--------->| Velocity +---+       +-------------------------+
+       |    |          +----------+                        packed data (SoA)
+       v    |                                 +-------------------------+
+    +-------+-+ contains    +----------+      | x0 | x1 | x2 | ... | xn |
+    | Storage +------------>| Position +------+-------------------------+
+    +-------+-+             +----------+      | y0 | y1 | y2 | ... | yn |
+            |                                 +-------------------------+
+            | contains +--------------+                    packed data (SoA)
+            +--------->| Acceleration +--+    +-------------------------+
+                       +--------------+  |    | x0 | x1 | x2 | ... | xn |
+                                         +----+-------------------------+
+                                              | y0 | y1 | y2 | ... | yn |
+                                              +-------------------------+
 
     @enduml
-
 
 }
 
@@ -539,6 +589,45 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ## Migrating entities between archetypes
 
+![Moving an entity from one bucket to another](uml/img/aecs-migrating-entitites.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-migrating-entitites.uml
+    ----------------------------------------------------------
+
+    @startuml img/aecs-migrating-entitites.png
+    ditaa
+
+           old archetype                                 replaces
+    +---------------------------+                        +-----+
+    | 0 | 0 | 0 | 1 | 1 | 0 | 1 |                        |     |
+    +-------------+---+-------+-+                        v     |
+                  |   |       |      +---------------+------+--+-+
+                  |   |       +----->| p0 | p1 | ... | pn-1 | pn |
+                  |   |              +---------------+------+----+
+                  |   +------------->| v0 | v1 | ... | vn-1 | pn |
+                  |                  +---------------+------+----+
+                  +----------------->| a0 | a1 | ... | an-1 | an |
+                                     +---------------+--+---+----+
+           new archetype                                |
+    +---------------------------+                       +----+ moves to
+    | 0 | 1 | 0 | 1 | 1 | 0 | 1 |                            |
+    +-----+-------+---+-------+-+                            v
+          |       |   |       |      +--------------------+------+
+          |       |   |       +----->| p0 | p1 | ... | pn | pn+1 |
+          |       |   |              +--------------------+------+
+          |       |   +------------->| v0 | v1 | ... | vn | vn+1 |
+          |       |                  +--------------------+------+
+          |       +----------------->| a0 | a1 | ... | an | an+1 |
+          |                          +--------------------+------+
+          +------------------------->| m0 | m1 | ... | mn | mn+1 |
+                                     +--------------------+------+
+
+    @enduml
+
+}
+
     lang: zig esc: none tag: #Updating/adding components to entities
     ----------------------------------------------------------------
 
@@ -597,6 +686,46 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ### Removing entities
 
+![Removing a component from an entity](uml/img/aecs-removing-components.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-removing-components.uml
+    ----------------------------------------------------------
+
+    @startuml img/aecs-removing-components.png
+    ditaa
+
+           old archetype                                replaces
+    +---------------------------+                       +------+
+    | 0 | 1 | 0 | 1 | 1 | 0 | 1 |                       |      |
+    +-----+-------+---+-------+-+                       v      |
+          |       |   |       |      +---------------+------+--+-+
+          |       |   |       +----->| p0 | p1 | ... | pn-1 | pn |
+          |       |   |              +---------------+------+----+
+          |       |   +------------->| v0 | v1 | ... | vn-1 | vn |
+          |       |                  +---------------+------+----+
+          |       +----------------->| a0 | a1 | ... | an-1 | an |
+          |                          +---------------+------+----+
+          +------------------------->| m0 | m1 | ... | mn-1 | mn |
+                                     +---------------+------+----+
+                                                        |
+           new archetype                                |
+    +---------------------------+                       +-----+ moves to
+    | 0 | 0 | 0 | 1 | 1 | 0 | 1 |                             |
+    +-------------+---+-------+-+                             v
+                  |   |       |      +---------------+----+------+
+                  |   |       +----->| p0 | p1 | ... | pn | pn+1 |
+                  |   |              +---------------+----+------+
+                  |   +------------->| v0 | v1 | ... | vn | pn+1 |
+                  |                  +---------------+----+------+
+                  +----------------->| a0 | a1 | ... | an | an+1 |
+                                     +---------------+----+------+
+
+    @enduml
+
+}
+
     lang: zig esc: none tag: #Removing components from entities
     -----------------------------------------------------------
 
@@ -633,6 +762,32 @@ In combination with an index, archetypes are used to locate which bucket an enti
     }
 
 ### Deleting entities
+
+![](uml/img/aecs-removing-entitites.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-removing-entitites.uml
+    ---------------------------------------------------------
+
+    @startuml img/aecs-removing-entitites.png
+    ditaa
+
+           old archetype                                 replaces
+    +---------------------------+                        +-----+
+    | 0 | 0 | 0 | 1 | 1 | 0 | 1 |                        |     |
+    +-------------+---+-------+-+                        v     |
+                  |   |       |      +---------------+------+--+-+
+                  |   |       +----->| p0 | p1 | ... | pn-1 | pn |
+                  |   |              +---------------+------+----+
+                  |   +------------->| v0 | v1 | ... | vn-1 | pn |
+                  |                  +---------------+------+----+
+                  +----------------->| g0 | g1 | ... | gn-1 | vn |
+                                     +---------------+--+---+----+
+
+    @enduml
+
+}
 
     lang: zig esc: none tag: #Deleting entities
     -------------------------------------------
