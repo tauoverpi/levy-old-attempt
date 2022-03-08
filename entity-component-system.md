@@ -1,5 +1,5 @@
 ---
-title: Entity Component System Module
+title: Archetype Entity Component Systems
 header-includes: |
   \newcommand{\hidden}[1]{}
   <style>
@@ -164,6 +164,34 @@ indexing, a mask is constructed such that void components can be ignored.
 
 ## Component indices
 
+![](uml/img/aecs-component-indices.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-component-indices.uml
+    --------------------------------------------------------
+
+    @startuml img/aecs-component-indices.png
+    ditaa
+
+                archetype
+    +-------------------------------+
+    | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 1 |
+    +---------+-------+---+-------+-+       storage layout
+              |       |   |       |    +----------------------+
+              |       |   |       +--->| Position component   |
+              |       |   |            +----------------------+
+              |       |   +----------->| Velocity component   |
+              |       |                +----------------------+
+              |       +--------------->| Gravity component    |
+              |                        +----------------------+
+              +----------------------->| Mass component       |
+                                       +----------------------+
+
+    @enduml
+
+}
+
 Archetypes encode the offset of each component within component storage by the number of set bits preceding the
 bit-index of the component of interest while ignoring components which aren't present. Since an Archetype may have
 components without associated data, the set must not contain any of those components and thus the difference is
@@ -240,6 +268,44 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ## Component storage
 
+![](uml/img/aecs-component-storage.png)
+
+\hidden{
+
+    lang: uml esc: none file: uml/aecs-component-storage.uml
+    --------------------------------------------------------
+
+    @startuml img/aecs-component-storage.png
+    ditaa
+
+    +--------+ key to  +-------------------+ index to
+    | Entity +-------->| archetype | index +---------+
+    +--------+         +-+-----------------+         |
+                         |                           |
+                         |                           v packed data (SoA)
+        reference to     |                 +-------------------------+
+       +-----------------+                 | x0 | x1 | x2 | ... | xn |
+       |               component      +----+-------------------------+
+       |     contains  +----------+   |    | y0 | y1 | y2 | ... | yn |
+       |    +--------->| Velocity +---+    +-------------------------+
+       |    |          +----------+                    packed data (SoA)
+       v    |                              +-------------------------+
+    +-------+-+ contains    +----------+   | x0 | x1 | x2 | ... | xn |
+    | Storage +------------>| Position +---+-------------------------+
+    +-------+-+             +----------+   | y0 | y1 | y2 | ... | yn |
+            |                              +-------------------------+
+            | contains +----------+                    packed data (SoA)
+            +--------->| Gravity  +---+    +-------------------------+
+                       +----------+   |    | x0 | x1 | x2 | ... | xn |
+                                      +----+-------------------------+
+                                           | y0 | y1 | y2 | ... | yn |
+                                           +-------------------------+
+
+    @enduml
+
+
+}
+
     lang: zig esc: none tag: #The archetype storage container
     ---------------------------------------------------------
 
@@ -266,8 +332,7 @@ In combination with an index, archetypes are used to locate which bucket an enti
             pub fn cast(self: Erased, comptime T: type) *Component(T) {
                 const C = Component(T);
                 assert(self.hash == C.hash);
-                const ptr = @ptrCast(*C, @alignCast(@alignOf(C), self.base));
-                return ptr;
+                return @ptrCast(*C, @alignCast(@alignOf(C), self.base));
             }
         };
 

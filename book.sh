@@ -3,9 +3,10 @@
 echo extracting source files ------------------------------------------
 zangle tangle *.md
 echo running tests ----------------------------------------------------
-zangle ls *.md | sed '/\.uml/d' | while read -r l; do zig test $l; done
+zangle ls *.md | sed -e '/\.uml/d' -e '/\.asy/d' | while read -r l; do zig test $l; done
 echo generating diagrams ----------------------------------------------
 find uml/ -name '*.uml' -exec plantuml {} \;
+find uml/ -name '*.asy' -exec asy -o uml/img/ {} \;
 echo building pdf -----------------------------------------------------
 mkdir -p tmp
 find . -name '*.md' | while read -r l; do \
