@@ -18,14 +18,15 @@ abstract: |
     const std = @import("std");
     const math = std.math;
     const meta = std.meta;
+    const testing = std.testing;
     const assert = std.debug.assert;
 
     const Allocator = std.mem.Allocator;
 
-    [[An entity manager system with entity reclimation]]
-    [[Definition of an entity component store]]
-    [[The archetype storage container]]
-    [[Testing]]
+    [[AECS - An entity manager system with entity reclimation]]
+    [[AECS - Definition of an entity component store]]
+    [[AECS - The archetype storage container]]
+    [[AECS - Testing]]
 
 # Entity
 
@@ -83,8 +84,8 @@ abstract: |
 Entity identifiers are represented by 32-bit integers dealt out by an `EntityManager` responsible for generating
 new identifiers as needed and reusing old identifiers returned to the manager.
 
-    lang: zig esc: none tag: #An entity manager system with entity reclimation
-    --------------------------------------------------------------------------
+    lang: zig esc: none tag: #AECS - An entity manager system with entity reclimation
+    ---------------------------------------------------------------------------------
 
     pub const EntityId = enum(u32) { _ };
     pub const EntityManager = struct {
@@ -118,8 +119,8 @@ Each entity within the database has a shape given by the combination of it's com
 the database, this is represented as an unsigned integer used as a bitmap where each bit corresponds to the presence
 of one of the components.
 
-    lang: zig esc: [[]] tag: #Archetype representation
-    --------------------------------------------------
+    lang: zig esc: [[]] tag: #AECS - Archetype representation
+    ---------------------------------------------------------
 
     pub const Archetype = enum(Int) {
         empty,
@@ -139,16 +140,16 @@ of one of the components.
             return self;
         }
 
-        [[Deriving archetypes]]
-        [[Archetypes without data]]
-        [[Recovering component indices from Archetypes]]
-        [[Archetype membership and subtypes]]
+        [[AECS - Deriving archetypes]]
+        [[AECS - Archetypes without data]]
+        [[AECS - Recovering component indices from Archetypes]]
+        [[AECS - Archetype membership and subtypes]]
     };
 
 ## Subtypes and membership
 
-    lang: zig esc: none tag: #Archetype membership and subtypes
-    -----------------------------------------------------------
+    lang: zig esc: none tag: #AECS - Archetype membership and subtypes
+    ------------------------------------------------------------------
 
     pub fn has(self: Archetype, tag: Tag) bool {
         const bit = @as(Int, 1) << @enumToInt(tag);
@@ -162,8 +163,8 @@ of one of the components.
 
 ## Deriving archetypes
 
-    lang: zig esc: none tag: #Deriving archetypes
-    ---------------------------------------------
+    lang: zig esc: none tag: #AECS - Deriving archetypes
+    ----------------------------------------------------
 
     /// Construct a new archetype with the given tag included in the set of active components
     pub fn with(self: Archetype, tag: Tag) Archetype {
@@ -198,8 +199,8 @@ Components without any associated data become tags which can be matched by syste
 representation. To handle this properly in functions which rely on the number of bits present for allocation and
 indexing, a mask is constructed such that void components can be ignored.
 
-    lang: zig esc: none tag: #Archetypes without data
-    -------------------------------------------------
+    lang: zig esc: none tag: #AECS - Archetypes without data
+    --------------------------------------------------------
 
     /// An archetype consisting of all void components
     pub const void_bits = blk: {
@@ -248,8 +249,8 @@ bit-index of the component of interest while ignoring components which aren't pr
 components without associated data, the set must not contain any of those components and thus the difference is
 taken between the set and that of all void components.
 
-    lang: zig esc: none tag: #Recovering component indices from Archetypes
-    ----------------------------------------------------------------------
+    lang: zig esc: none tag: #AECS - Recovering component indices from Archetypes
+    -----------------------------------------------------------------------------
 
     /// Get the index of a component with the given archetype
     pub fn index(self: Archetype, tag: Tag) u16 {
@@ -272,8 +273,8 @@ taken between the set and that of all void components.
 
 In combination with an index, archetypes are used to locate which bucket an entity belongs to
 
-    lang: zig esc: none tag: #Entity pointer
-    ----------------------------------------
+    lang: zig esc: none tag: #AECS - Entity pointer
+    -----------------------------------------------
 
     /// Pointer to the physical location of the entity
     pub const Pointer = struct {
@@ -285,8 +286,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ## Database
 
-    lang: zig esc: [[]] tag: #Definition of an entity component store
-    -----------------------------------------------------------------
+    lang: zig esc: [[]] tag: #AECS - Definition of an entity component store
+    ------------------------------------------------------------------------
 
     /// Construct a new database for the given data model
     pub fn Model(comptime T: type) type {
@@ -297,13 +298,13 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
             const Self = @This();
 
-            [[Archetype representation]]
-            [[Entity pointer]]
-            [[Adding new entities]]
-            [[Updating/adding components to entities]]
-            [[Removing components from entities]]
-            [[Deleting entities]]
-            [[Running systems]]
+            [[AECS - Archetype representation]]
+            [[AECS - Entity pointer]]
+            [[AECS - Adding new entities]]
+            [[AECS - Updating/adding components to entities]]
+            [[AECS - Removing components from entities]]
+            [[AECS - Deleting entities]]
+            [[AECS - Running systems]]
 
             pub fn deinit(self: *Self, gpa: Allocator) void {
                 self.manager.deinit(gpa);
@@ -356,8 +357,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 }
 
-    lang: zig esc: none tag: #The archetype storage container
-    ---------------------------------------------------------
+    lang: zig esc: none tag: #AECS - The archetype storage container
+    ----------------------------------------------------------------
 
     pub const Storage = struct {
         len: u32 = 0,
@@ -483,8 +484,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ### Inserting new entities
 
-    lang: zig esc: none tag: #Adding new entities
-    ---------------------------------------------
+    lang: zig esc: none tag: #AECS - Adding new entities
+    ----------------------------------------------------
 
     pub fn insert(
         self: *Self,
@@ -507,8 +508,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 ### Updating and adding entities
 
-    lang: zig esc: none tag: #Updating/adding components to entities
-    ----------------------------------------------------------------
+    lang: zig esc: none tag: #AECS - Updating/adding components to entities
+    -----------------------------------------------------------------------
 
     pub fn update(
         self: *Self,
@@ -628,8 +629,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 }
 
-    lang: zig esc: none tag: #Updating/adding components to entities
-    ----------------------------------------------------------------
+    lang: zig esc: none tag: #AECS - Updating/adding components to entities
+    -----------------------------------------------------------------------
 
     fn migrateEntity(
         self: *Self,
@@ -696,10 +697,10 @@ In combination with an index, archetypes are used to locate which bucket an enti
     @startuml img/aecs-removing-components.png
     ditaa
 
-           old archetype                                replaces
-    +---------------------------+                       +------+
-    | 0 | 1 | 0 | 1 | 1 | 0 | 1 |                       |      |
-    +-----+-------+---+-------+-+                       v      |
+           old archetype                                 replaces
+    +---------------------------+                        +-----+
+    | 0 | 1 | 0 | 1 | 1 | 0 | 1 |                        |     |
+    +-----+-------+---+-------+-+                        v     |
           |       |   |       |      +---------------+------+--+-+
           |       |   |       +----->| p0 | p1 | ... | pn-1 | pn |
           |       |   |              +---------------+------+----+
@@ -708,26 +709,26 @@ In combination with an index, archetypes are used to locate which bucket an enti
           |       +----------------->| a0 | a1 | ... | an-1 | an |
           |                          +---------------+------+----+
           +------------------------->| m0 | m1 | ... | mn-1 | mn |
-                                     +---------------+------+----+
+                                     +---------------+--+---+----+
                                                         |
            new archetype                                |
     +---------------------------+                       +-----+ moves to
     | 0 | 0 | 0 | 1 | 1 | 0 | 1 |                             |
     +-------------+---+-------+-+                             v
-                  |   |       |      +---------------+----+------+
+                  |   |       |      +--------------------+------+
                   |   |       +----->| p0 | p1 | ... | pn | pn+1 |
-                  |   |              +---------------+----+------+
-                  |   +------------->| v0 | v1 | ... | vn | pn+1 |
-                  |                  +---------------+----+------+
+                  |   |              +--------------------+------+
+                  |   +------------->| v0 | v1 | ... | vn | vn+1 |
+                  |                  +--------------------+------+
                   +----------------->| a0 | a1 | ... | an | an+1 |
-                                     +---------------+----+------+
+                                     +--------------------+------+
 
     @enduml
 
 }
 
-    lang: zig esc: none tag: #Removing components from entities
-    -----------------------------------------------------------
+    lang: zig esc: none tag: #AECS - Removing components from entities
+    ------------------------------------------------------------------
 
     pub fn remove(
         self: *Self,
@@ -789,8 +790,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 }
 
-    lang: zig esc: none tag: #Deleting entities
-    -------------------------------------------
+    lang: zig esc: none tag: #AECS - Deleting entities
+    --------------------------------------------------
 
     pub fn delete(self: *Self, key: EntityId) void {
         self.manager.delete(key);
@@ -808,8 +809,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
 Evaluating systems involves traversing all buckets containing
 
-    lang: zig esc: none tag: #Running systems
-    -----------------------------------------
+    lang: zig esc: none tag: #AECS - Running systems
+    ------------------------------------------------
 
     pub const BeginContext = struct {
         gpa: Allocator,
@@ -821,8 +822,18 @@ Evaluating systems involves traversing all buckets containing
         gpa: Allocator,
         arena: Allocator,
         model: *Self,
-        entities: []const EntityId,
         type: Archetype,
+        bucket: *Storage,
+
+        pub fn get(
+            self: UpdateContext,
+            comptime tag: Archetype.Tag,
+        ) ?*std.MultiArrayList(meta.fieldInfo(T, tag).field_type) {
+            const Data = meta.fieldInfo(T, tag).field_type;
+            if (self.type.indexOf(tag)) |index| {
+                return &self.bucket.erased[index].cast(Data).data;
+            } else return null;
+        }
     };
 
     pub const EndContext = struct {
@@ -870,8 +881,8 @@ Evaluating systems involves traversing all buckets containing
                         .gpa = gpa,
                         .arena = arena,
                         .model = self,
-                        .entities = bucket.entities.items,
                         .type = archetype,
+                        .bucket = bucket,
                     };
 
                     var tuple: Tuple = undefined;
@@ -908,8 +919,8 @@ Evaluating systems involves traversing all buckets containing
 
 # Tests
 
-    lang: zig esc: none tag: #Testing
-    ---------------------------------
+    lang: zig esc: none tag: #AECS - Testing
+    ----------------------------------------
 
     test {
         const Data = struct {
