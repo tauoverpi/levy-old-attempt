@@ -263,7 +263,8 @@ taken between the set and that of all void components.
 
     /// Get the possible index of a component with the given archetype
     pub fn indexOf(self: Archetype, tag: Tag) ?u16 {
-        if (self.difference(void_bits).with(tag) != self) return null;
+        const this = self.difference(void_bits);
+        if (this.with(tag) != this) return null;
         return self.index(tag);
     }
 
@@ -823,6 +824,7 @@ Evaluating systems involves traversing all buckets containing
         arena: Allocator,
         model: *Self,
         type: Archetype,
+        entities: []const EntityId,
         bucket: *Storage,
 
         pub fn get(
@@ -831,7 +833,7 @@ Evaluating systems involves traversing all buckets containing
         ) ?*std.MultiArrayList(meta.fieldInfo(T, tag).field_type) {
             const Data = meta.fieldInfo(T, tag).field_type;
             if (self.type.indexOf(tag)) |index| {
-                return &self.bucket.erased[index].cast(Data).data;
+                return &self.bucket.components[index].cast(Data).data;
             } else return null;
         }
     };
@@ -861,11 +863,12 @@ Evaluating systems involves traversing all buckets containing
             const shape = Archetype.init(inputs);
 
             if (@hasDecl(System, "begin")) {
-                try system.begin(.{
+                const context: BeginContext = .{
                     .gpa = gpa,
                     .arena = arena,
                     .model = self,
-                });
+                };
+                try system.begin(context);
             }
 
             var it = self.archetypes.iterator();
@@ -882,6 +885,7 @@ Evaluating systems involves traversing all buckets containing
                         .arena = arena,
                         .model = self,
                         .type = archetype,
+                        .entities = bucket.entities.items,
                         .bucket = bucket,
                     };
 
@@ -908,11 +912,13 @@ Evaluating systems involves traversing all buckets containing
             }
 
             if (@hasDecl(System, "end")) {
-                try system.end(.{
+                const context: EndContext = .{
                     .gpa = gpa,
                     .arena = arena,
                     .model = self,
-                });
+                };
+
+                try system.end(context);
             }
         }
     }
