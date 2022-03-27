@@ -13,6 +13,7 @@ title: L.E.V.Y - coins
     const Array = std.MultiArrayList;
     const ArrayList = std.ArrayListUnmanaged;
     const Model = lib.aecs.Model(Data);
+    const Archetype = Model.Archetype;
     const EntityId = lib.aecs.EntityId;
     const Allocator = std.mem.Allocator;
 
@@ -70,7 +71,7 @@ title: L.E.V.Y - coins
             systems.input.key.set(.left, raylib.IsKeyDown(raylib.KEY_LEFT));
             systems.input.key.set(.right, raylib.IsKeyDown(raylib.KEY_RIGHT));
 
-            try game.step(gpa, &systems);
+            try systems.update(gpa, &game);
 
             raylib.BeginDrawing();
             raylib.ClearBackground(raylib.RAYWHITE);
@@ -118,57 +119,74 @@ title: L.E.V.Y - coins
 
         const Tag = Model.Archetype.Tag;
 
+        pub fn update(self: *Systems, gpa: Allocator, model: *Model) !void {
+            var err: anyerror!void = {};
+            inline for (std.meta.fields(Systems)) |field| {
+                err = @field(self, field.name).update(gpa, model);
+                try err;
+            }
+        }
+
         pub const Movement = struct {
             delta: i32 = 1,
 
-            pub const inputs: []const Tag = &.{
+            pub const inputs = Archetype.init(&.{
                 .position_next,
                 .velocity,
-            };
+            });
 
             pub fn update(
                 self: *Movement,
-                position: *Array(Data.Point2D),
-                velocity: *const Array(Data.Vector2D),
-                context: Model.UpdateContext,
+                _: Allocator,
+                model: *Model,
             ) !void {
-                _ = context;
-
                 const delta = self.delta;
-                const x = position.items(.x);
-                const y = position.items(.y);
-                const vx = velocity.items(.x);
-                const vy = velocity.items(.y);
 
-                for (context.entities) |_, index| {
-                    x[index] = vx[index] * delta + x[index];
-                    y[index] = vy[index] * delta + y[index];
+                var it = model.query(inputs);
+
+                while (it.next()) |entry| {
+                    const array = entry.arrays(inputs);
+
+                    const x = array.position_next.items(.x);
+                    const y = array.position_next.items(.y);
+                    const vx = array.velocity.items(.x);
+                    const vy = array.velocity.items(.y);
+
+                    for (entry.bucket.entities.items) |_, index| {
+                        x[index] = vx[index] * delta + x[index];
+                        y[index] = vy[index] * delta + y[index];
+                    }
                 }
             }
 
         };
 
         pub const ApplyMovement = struct {
-            pub const inputs: []const Tag = &.{
+            pub const inputs = Archetype.init(&.{
                 .position,
                 .position_next,
-            };
+            });
 
             pub fn update(
                 self: *ApplyMovement,
-                position: *Array(Data.Point2D),
-                destination: *const Array(Data.Point2D),
-                context: Model.UpdateContext,
+                _: Allocator,
+                model: *Model,
             ) !void {
                 _ = self;
-                const x = position.items(.x);
-                const y = position.items(.y);
-                const dx = destination.items(.x);
-                const dy = destination.items(.y);
+                var it = model.query(inputs);
 
-                for (context.entities) |_, index| {
-                    x[index] = dx[index];
-                    y[index] = dy[index];
+                while (it.next()) |entry| {
+                    const array = entry.arrays(inputs);
+
+                    const x = array.position.items(.x);
+                    const y = array.position.items(.y);
+                    const dx = array.position_next.items(.x);
+                    const dy = array.position_next.items(.y);
+
+                    for (entry.bucket.entities.items) |_, index| {
+                        x[index] = dx[index];
+                        y[index] = dy[index];
+                    }
                 }
             }
         };
@@ -195,26 +213,30 @@ title: L.E.V.Y - coins
                 }
             };
 
-            pub const inputs: []const Tag = &.{
+            pub const inputs = Archetype.init(&.{
                 .input,
-            };
+            });
 
-            pub fn update(self: *Input, context: Model.UpdateContext) !void {
-                if (context.get(.velocity)) |velocity| {
-                    var x: i32 = 0;
-                    var y: i32 = 0;
+            pub fn update(self: *Input, _: Allocator, model: *Model) !void {
+                var it = model.query(inputs);
 
-                    if (self.key.up & 1 == 1) y -= 2;
-                    if (self.key.down & 1 == 1) y += 2;
-                    if (self.key.left & 1 == 1) x -= 2;
-                    if (self.key.right & 1 == 1) x += 2;
+                while (it.next()) |entry| {
+                    if (entry.get(.velocity)) |velocity| {
+                        var x: i32 = 0;
+                        var y: i32 = 0;
 
-                    const vx = velocity.items(.x);
-                    const vy = velocity.items(.y);
+                        if (self.key.up & 1 == 1) y -= 2;
+                        if (self.key.down & 1 == 1) y += 2;
+                        if (self.key.left & 1 == 1) x -= 2;
+                        if (self.key.right & 1 == 1) x += 2;
 
-                    for (context.entities) |_, index| {
-                        vx[index] = x;
-                        vy[index] = y;
+                        const vx = velocity.items(.x);
+                        const vy = velocity.items(.y);
+
+                        for (entry.bucket.entities.items) |_, index| {
+                            vx[index] = x;
+                            vy[index] = y;
+                        }
                     }
                 }
             }
@@ -227,39 +249,27 @@ title: L.E.V.Y - coins
                 id: EntityId,
             };
 
-            pub const inputs: []const Tag = &.{
+            pub const inputs = Archetype.init(&.{
                 .position,
                 .shape,
-            };
-
-            pub fn begin(self: *Collision, context: Model.BeginContext) !void {
-                _ = context;
-                _ = self;
-                //self.quad.shrinkRetainingCapacity(0);
-            }
+            });
 
             pub fn update(
                 self: *Collision,
-                position: *const Array(Data.Point2D),
-                shape: *const Array(Data.Circle2D),
-                context: Model.UpdateContext,
+                _: Allocator,
+                model: *Model,
             ) !void {
-                for (context.entities) |id, index| {
-                    _ = self;
-                    _ = position;
-                    _ = shape;
-                    _ = id;
-                    _ = index;
-                }
+                _ = self;
+                _ = model;
             }
         };
 
         pub const Render = struct {
             scene: ArrayList(Object) = .{},
 
-            pub const inputs: []const Tag = &.{
+            pub const inputs = Archetype.init(&.{
                 .position,
-            };
+            });
 
             pub const Object = struct {
                 x: i32,
@@ -267,35 +277,32 @@ title: L.E.V.Y - coins
                 z: i32,
             };
 
-            pub fn begin(self: *Render, context: Model.BeginContext) !void {
-                _ = context;
-                self.scene.clearRetainingCapacity();
-            }
-
             pub fn update(
                 self: *Render,
-                position: *const Array(Data.Point2D),
-                context: Model.UpdateContext,
+                gpa: Allocator,
+                model: *Model,
             ) !void {
-                const x = position.items(.x);
-                const y = position.items(.y);
-                const z: i32 = if (context.type.has(.coin)) 1 else 0;
+                self.scene.clearRetainingCapacity();
 
-                try self.scene.ensureUnusedCapacity(context.gpa, position.len);
+                var it = model.query(inputs);
 
-                for (context.entities) |_, index| {
-                    self.scene.appendAssumeCapacity(.{
-                        .x = x[index],
-                        .y = y[index],
-                        .z = z,
-                    });
+                while (it.next()) |entry| {
+                    const array = entry.arrays(inputs);
+
+                    const x = array.position.items(.x);
+                    const y = array.position.items(.y);
+                    const z: i32 = if (entry.type.has(.coin)) 1 else 0;
+
+                    try self.scene.ensureUnusedCapacity(gpa, array.position.len);
+
+                    for (entry.bucket.entities.items) |_, index| {
+                        self.scene.appendAssumeCapacity(.{
+                            .x = x[index],
+                            .y = y[index],
+                            .z = z,
+                        });
+                    }
                 }
-            }
-
-            pub fn end(self: *Render, context: Model.EndContext) !void {
-                // TODO: sort the shit
-                _ = self;
-                _ = context;
             }
         };
     };

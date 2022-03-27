@@ -366,7 +366,6 @@ In combination with an index, archetypes are used to locate which bucket an enti
             [[AECS - Removing components from entities]]
             [[AECS - Deleting entities]]
             [[AECS - Querying archetypes]]
-            [[AECS - Running systems]]
 
             pub fn deinit(self: *Self, gpa: Allocator) void {
                 self.manager.deinit(gpa);
@@ -1038,10 +1037,12 @@ where
 
     pub fn arrays(self: Entry, comptime tags: Archetype) Arrays(tags) {
         var r: Arrays(tags) = undefined;
+        const ty = comptime tags.difference(Archetype.void_bits);
 
         inline for (meta.fields(Archetype.Tag)) |field| {
             const tag = @field(Archetype.Tag, field.name);
-            if (tags.indexOf(tag)) |index| {
+            if (comptime ty.has(tag)) {
+                const index = self.type.index(tag);
                 const Data = meta.fieldInfo(T, tag).field_type;
                 @field(r, field.name) = &self.bucket.components[index].cast(Data).data;
             }
@@ -1050,168 +1051,17 @@ where
         return r;
     }
 
-## Running systems
-
-Evaluating systems involves traversing all buckets containing
-
-    lang: zig esc: none tag: #AECS - Running systems
-    ------------------------------------------------
-
-    pub const BeginContext = struct {
-        gpa: Allocator,
-        arena: Allocator,
-        model: *Self,
-    };
-
-    pub const UpdateContext = struct {
-        gpa: Allocator,
-        arena: Allocator,
-        model: *Self,
-        type: Archetype,
-        entities: []const EntityId,
-        bucket: *Bucket,
-
-        pub fn get(
-            self: UpdateContext,
-            comptime tag: Archetype.Tag,
-        ) ?*std.MultiArrayList(meta.fieldInfo(T, tag).field_type) {
-            const Data = meta.fieldInfo(T, tag).field_type;
-            if (self.type.indexOf(tag)) |index| {
-                return &self.bucket.components[index].cast(Data).data;
-            } else return null;
-        }
-    };
-
-    pub const EndContext = struct {
-        gpa: Allocator,
-        arena: Allocator,
-        model: *Self,
-    };
-
-    pub fn step(self: *Self, gpa: Allocator, systems: anytype) !void {
-        const info = @typeInfo(meta.Child(@TypeOf(systems))).Struct;
-
-        var ret: anyerror!void = {};
-
-        var frame_allocator = std.heap.ArenaAllocator.init(gpa);
-        defer frame_allocator.deinit();
-
-        const arena = frame_allocator.allocator();
-
-        inline for (info.fields) |field| {
-            const function = field.field_type.update;
-            const system = &@field(systems, field.name);
-            const System = meta.Child(@TypeOf(system));
-            const Tuple = meta.ArgsTuple(@TypeOf(function));
-            const inputs = field.field_type.inputs;
-            const shape = Archetype.init(inputs);
-
-            if (@hasDecl(System, "begin")) {
-                const context: BeginContext = .{
-                    .gpa = gpa,
-                    .arena = arena,
-                    .model = self,
-                };
-                try system.begin(context);
-            }
-
-            if (@hasDecl(System, "update")) {
-                var it = self.query(shape);
-                while (it.next()) |entry| {
-                    if (entry.bucket.len == 0) continue;
-
-                    const components = entry.bucket.components;
-
-                    const context: UpdateContext = .{
-                        .gpa = gpa,
-                        .arena = arena,
-                        .model = self,
-                        .type = entry.type,
-                        .entities = entry.bucket.entities.items,
-                        .bucket = entry.bucket,
-                    };
-
-                    var tuple: Tuple = undefined;
-                    tuple[0] = system;
-
-                    comptime var parameter: comptime_int = 1;
-                    inline for (inputs) |tag| {
-                        const Type = meta.fieldInfo(T, tag).field_type;
-                        if (Type != void) {
-                            const i = entry.type.index(tag);
-                            const component = &components[i].cast(Type).data;
-                            tuple[parameter] = component;
-                            parameter += 1;
-                        }
-                    }
-
-                    tuple[parameter] = context;
-                    const options = .{};
-                    ret = @call(options, function, tuple);
-                    try ret;
-                }
-            }
-
-            if (@hasDecl(System, "end")) {
-                const context: EndContext = .{
-                    .gpa = gpa,
-                    .arena = arena,
-                    .model = self,
-                };
-
-                try system.end(context);
-            }
-        }
+    pub fn get(
+        self: Entry,
+        comptime tag: Archetype.Tag,
+    ) ?*std.MultiArrayList(meta.fieldInfo(T, tag).field_type) {
+        const Data = meta.fieldInfo(T, tag).field_type;
+        if (self.type.indexOf(tag)) |index| {
+            return &self.bucket.components[index].cast(Data).data;
+        } else return null;
     }
 
 # Examples
-
-    lang: zig esc: none tag: #AECS - Testing
-    ----------------------------------------
-
-    test {
-        const Data = struct {
-            health: Health,
-
-            pub const Health = struct { hp: u32 };
-        };
-
-        const Database = Model(Data);
-
-        const gpa = std.testing.allocator;
-        var systems: struct {
-            example: struct {
-                pub const inputs: []const Database.Archetype.Tag = &.{
-                    .health,
-                };
-
-                pub fn update(
-                    self: *@This(),
-                    health: *std.MultiArrayList(Data.Health),
-                    context: Database.UpdateContext,
-                ) !void {
-                    _ = self;
-                    _ = context;
-                    const hp = health.items(.hp);
-                    for (hp) |*value| {
-                        value.* = 1;
-                    }
-                }
-            } = .{},
-        } = .{};
-
-        var game: Database = .{};
-        defer game.deinit(gpa);
-
-        const player = try game.insert(gpa, .{}, Data, .{ .health = .{ .hp = 100 } });
-        defer game.delete(gpa, player.id);
-
-        try game.step(gpa, &systems);
-        try game.remove(gpa, player, Database.Archetype.init(&.{.health}));
-        try game.step(gpa, &systems);
-    }
-
-## Systems by query
 
     lang: zig esc: none tag: #AECS - Testing
     ----------------------------------------
