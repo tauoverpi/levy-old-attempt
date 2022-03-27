@@ -4,12 +4,22 @@ abstract: |
     A game
 ...
 
+# Progress
+
+- [x] ECS
+- [ ] collision system
+  - [ ] backed collision tree for static
+
 # Introduction
 
     lang: zig esc: none file: src/lib.zig
     -------------------------------------
 
     pub const aecs = @import("aecs.zig");
+
+    comptime {
+        _ = aecs;
+    }
 
 # Building
 

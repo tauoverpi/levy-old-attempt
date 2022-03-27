@@ -8,8 +8,6 @@ header-includes: |
         text-decoration: underline;
     }
   </style>
-abstract: |
-    We define an entity-component-system with archetype storage with compile-time specialization.
 ...
 
     lang: zig esc: [[]] file: src/aecs.zig
@@ -20,12 +18,14 @@ abstract: |
     const meta = std.meta;
     const testing = std.testing;
     const assert = std.debug.assert;
+    const is_debug = @import("builtin").mode == .Debug;
 
     const Allocator = std.mem.Allocator;
 
     [[AECS - An entity manager system with entity reclimation]]
     [[AECS - Definition of an entity component store]]
     [[AECS - The archetype storage container]]
+    [[AECS - Component arrays]]
     [[AECS - Testing]]
 
 # Entity
@@ -80,14 +80,15 @@ abstract: |
 
 }
 
-
-Entity identifiers are represented by 32-bit integers dealt out by an `EntityManager` responsible for generating
-new identifiers as needed and reusing old identifiers returned to the manager.
+Entities are represented as 32-bit integers identifiers which may be present as a key in component tables. To ensure
+uniqueness, an `EntityManager` is used to safely generate new entities on demand and destroy (recycle) old entities no
+longer in use within the database.
 
     lang: zig esc: none tag: #AECS - An entity manager system with entity reclimation
     ---------------------------------------------------------------------------------
 
     pub const EntityId = enum(u32) { _ };
+    pub const Role = enum(u32) { none, _ };
     pub const EntityManager = struct {
         index: u32 = 0,
         dead: std.ArrayListUnmanaged(EntityId) = .{},
@@ -113,11 +114,14 @@ new identifiers as needed and reusing old identifiers returned to the manager.
         }
     };
 
+This is done by creating a stack with capacity for all currently allocated entities which, when entities are returned,
+is used to reissue entity identifiers under the assumption that components and other structures outside the database no
+longer refer to the entity once it's been destroyed.
+
 # Archetype
 
-Each entity within the database has a shape given by the combination of it's components called an `Archetype`. Within
-the database, this is represented as an unsigned integer used as a bitmap where each bit corresponds to the presence
-of one of the components.
+Each entity within the database has a shape given by the combination of it's components called an `Archetype`. The
+`Archetype` is represented as a bitset with each bit corresponding to the presence of a component.
 
     lang: zig esc: [[]] tag: #AECS - Archetype representation
     ---------------------------------------------------------
@@ -272,17 +276,50 @@ taken between the set and that of all void components.
         return @popCount(Int, @enumToInt(self.difference(void_bits)));
     }
 
-In combination with an index, archetypes are used to locate which bucket an entity belongs to
+In combination with an index, archetypes are used to locate which bucket an entity belongs to:
 
     lang: zig esc: none tag: #AECS - Entity pointer
     -----------------------------------------------
 
-    /// Pointer to the physical location of the entity
+    pub const PointerList = std.ArrayListUnmanaged(Pointer);
     pub const Pointer = struct {
         /// Index at which the entity resides within the archetype bucket
         index: u32,
         /// Archetype bucket which the entity resides within
         type: Archetype,
+        /// Component which registered this entity, if none then this will be null
+        component: ?Archetype.Tag = null,
+        /// Role which the entity plays
+        role: Role = .none,
+    };
+
+.
+
+    lang: zig esc: none tag: #AECS - Entity pointer
+    -----------------------------------------------
+
+    pub const Key = struct {
+        id: EntityId,
+        component: ?Archetype.Tag = null,
+        role: Role = .none,
+
+        pub fn getIndex(self: Key, items: []const Pointer) ?u32 {
+            if (self.component) |component| {
+                for (items) |item, index| {
+                    if (item.component != null and item.component.? == component and item.role == self.role) {
+                        return @intCast(u32, index);
+                    }
+                }
+            } else {
+                for (items) |item, index| {
+                    if (item.component == null and item.role == self.role) {
+                        return @intCast(u32, index);
+                    }
+                }
+            }
+
+            return null;
+        }
     };
 
 ## Database
@@ -294,7 +331,7 @@ In combination with an index, archetypes are used to locate which bucket an enti
     pub fn Model(comptime T: type) type {
         return struct {
             manager: EntityManager = .{},
-            entities: std.AutoHashMapUnmanaged(EntityId, Pointer) = .{},
+            entities: std.AutoHashMapUnmanaged(EntityId, PointerList) = .{},
             archetypes: std.AutoHashMapUnmanaged(Archetype, Storage) = .{},
 
             const Self = @This();
@@ -336,27 +373,33 @@ In combination with an index, archetypes are used to locate which bucket an enti
     +--------+         +-+-----------------+             |
                          |                               |
                          |                               v packed data (SoA)
-        reference to     |                    +-------------------------+
-       +-----------------+                    | x0 | x1 | x2 | ... | xn |
-       |               component      +-------+-------------------------+
-       |     contains  +----------+   |       | y0 | y1 | y2 | ... | yn |
-       |    +--------->| Velocity +---+       +-------------------------+
-       |    |          +----------+                        packed data (SoA)
-       v    |                                 +-------------------------+
-    +-------+-+ contains    +----------+      | x0 | x1 | x2 | ... | xn |
-    | Storage +------------>| Position +------+-------------------------+
-    +-------+-+             +----------+      | y0 | y1 | y2 | ... | yn |
-            |                                 +-------------------------+
-            | contains +--------------+                    packed data (SoA)
-            +--------->| Acceleration +--+    +-------------------------+
-                       +--------------+  |    | x0 | x1 | x2 | ... | xn |
-                                         +----+-------------------------+
-                                              | y0 | y1 | y2 | ... | yn |
-                                              +-------------------------+
+        reference to     |                      +-------------------------+
+       +-----------------+                      | x0 | x1 | x2 | ... | xn |
+       |               component        +-------+-------------------------+
+       |     contains  +------------+   |       | y0 | y1 | y2 | ... | yn |
+       |    +--------->| Velocity2D +---+       +-------------------------+
+       |    |          +------------+                        packed data (SoA)
+       v    |                                   +-------------------------+
+    +-------+-+ contains    +------------+      | x0 | x1 | x2 | ... | xn |
+    | Storage +------------>| Position2D +------+-------------------------+
+    +-------+-+             +------------+      | y0 | y1 | y2 | ... | yn |
+            |                                   +-------------------------+
+            | contains +----------------+                    packed data (SoA)
+            +--------->| Acceleration2D +--+    +-------------------------+
+                       +----------------+  |    | x0 | x1 | x2 | ... | xn |
+                                           +----+-------------------------+
+                                                | y0 | y1 | y2 | ... | yn |
+                                                +-------------------------+
 
     @enduml
 
 }
+
+Archetype storage consists of a slice of type-erased pointers to component arrays, a cached length, and a list of
+entity identifiers at positions specified within the entity lookup table such that it's possible to tell which entity
+each item belongs to while looping over component arrays. The position of the entity and the signature of the component
+are used to find the entity pointer belonging to and entity registered within this container such that it's possible to
+modify or remove individual entries.
 
     lang: zig esc: none tag: #AECS - The archetype storage container
     ----------------------------------------------------------------
@@ -427,6 +470,13 @@ In combination with an index, archetypes are used to locate which bucket an enti
         }
     };
 
+Component arrays make use of MultiArrayList from the standard library which stores fields within a component as a
+structure of arrays. The `Component` interface is a wrapper over this to cover the cases when the type cannot be
+statically known.
+
+    lang: zig esc: none tag: #AECS - Component arrays
+    -------------------------------------------------
+
     pub fn Component(comptime T: type) type {
         if (@sizeOf(T) == 0) {
             @compileError("tried to construct a container for a 0-bit type " ++ @typeName(T));
@@ -488,23 +538,70 @@ In combination with an index, archetypes are used to locate which bucket an enti
     lang: zig esc: none tag: #AECS - Adding new entities
     ----------------------------------------------------
 
+    pub const ComponentRole = struct {
+        component: ?Archetype.Tag = null,
+        role: Role = .none,
+    };
+
     pub fn insert(
         self: *Self,
         gpa: Allocator,
+        key: ComponentRole,
         comptime V: type,
         values: V,
-    ) Allocator.Error!EntityId {
+    ) Allocator.Error!Key {
         const id = try self.manager.new(gpa);
         errdefer self.manager.delete(id);
 
-        try self.entities.putNoClobber(gpa, id, .{
+        var list: PointerList = .{};
+        try list.append(gpa, .{
             .index = math.maxInt(u32),
             .type = .empty,
+            .component = key.component,
+            .role = key.role,
         });
+        errdefer list.deinit(gpa);
 
-        try self.update(gpa, id, V, values);
+        try self.entities.putNoClobber(gpa, id, list);
+        errdefer _ = self.entities.remove(id);
+
+        try self.update(gpa, .{ .id = id }, V, values);
+
+        return Key{ .id = id, .component = key.component, .role = key.role };
+    }
+
+    pub fn new(
+        self: *Self,
+        gpa: Allocator,
+    ) error{OutOfMemory}!EntityId {
+        const id = try self.manager.new(gpa);
+        errdefer self.manager.delete(id);
+
+        try self.entities.putNoClobber(gpa, id, .{});
 
         return id;
+    }
+
+    pub fn extend(
+        self: *Self,
+        gpa: Allocator,
+        key: Key,
+        comptime V: type,
+        values: V,
+    ) Allocator.Error!void {
+        const entity = self.entities.getPtr(key.id).?; // extend
+
+        if (is_debug) assert(key.getIndex(entity.items) == null);
+
+        try entity.append(.{
+            .index = math.maxInt(u32),
+            .type = .empty,
+            .component = key.component,
+            .role = key.role,
+        });
+        errdefer entity.shrinkRetainingCapacity(entity.items.len - 1);
+
+        try self.update(gpa, key, V, values);
     }
 
 ### Updating and adding entities
@@ -515,12 +612,14 @@ In combination with an index, archetypes are used to locate which bucket an enti
     pub fn update(
         self: *Self,
         gpa: Allocator,
-        key: EntityId,
+        key: Key,
         comptime V: type,
         values: V,
     ) Allocator.Error!void {
         const info = @typeInfo(V).Struct;
-        const entity = self.entities.getPtr(key).?; // update
+        const list = self.entities.getPtr(key.id).?; // update
+        const index = key.getIndex(list.items).?; // update
+        const entity = &list.items[index];
 
         comptime var computed_archetype: Archetype = .empty;
         comptime for (info.fields) |field| {
@@ -548,8 +647,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
 
         if (entity.type != archetype) {
             const new_index = bucket.len;
-            try bucket.reserve(gpa, key);
-            errdefer bucket.shrink(key);
+            try bucket.reserve(gpa, key.id);
+            errdefer bucket.shrink(new_index);
 
             if (entity.type != .empty) {
                 const old_bucket = self.archetypes.getPtr(entity.type) orelse {
@@ -646,16 +745,23 @@ In combination with an index, archetypes are used to locate which bucket an enti
                 if (archetype.has(tag) and entity.type.has(tag)) {
                     const old_component = old_bucket.components[entity.type.index(tag)];
                     const value = old_component.cast(field.field_type).data.get(entity.index);
-                    const com = bucket.components[archetype.index(tag)];
-                    const component = com.cast(field.field_type);
+                    const erased = bucket.components[archetype.index(tag)];
+                    const component = erased.cast(field.field_type);
                     component.data.set(component.data.len - 1, value);
                 }
             };
         }
 
         if (old_bucket.remove(entity.index)) |moved_key| {
+            const old_index = old_bucket.len;
             const moved = self.entities.getPtr(moved_key).?; // 404
-            moved.index = entity.index;
+
+            for (moved.items) |*item| {
+                if (item.index == old_index and item.type == entity.type) {
+                    item.index = entity.index;
+                    break;
+                }
+            }
         }
     }
 
@@ -734,10 +840,12 @@ In combination with an index, archetypes are used to locate which bucket an enti
     pub fn remove(
         self: *Self,
         gpa: Allocator,
-        key: EntityId,
+        key: Key,
         tags: Archetype,
     ) !void {
-        const entity = self.entities.getPtr(key).?; // remove
+        const list = self.entities.getPtr(key.id).?; // remove
+        const index = key.getIndex(list.items).?; // remove
+        const entity = &list.items[index];
         const archetype = entity.type.difference(tags);
 
         if (archetype != entity.type) {
@@ -746,8 +854,8 @@ In combination with an index, archetypes are used to locate which bucket an enti
                 try self.createArchetype(gpa, archetype);
 
             const new_index = bucket.len;
-            try bucket.reserve(gpa, key);
-            errdefer bucket.shrink(key);
+            try bucket.reserve(gpa, key.id);
+            errdefer bucket.shrink(new_index);
 
             if (entity.type != .empty) {
                 self.migrateEntity(
@@ -794,15 +902,45 @@ In combination with an index, archetypes are used to locate which bucket an enti
     lang: zig esc: none tag: #AECS - Deleting entities
     --------------------------------------------------
 
-    pub fn delete(self: *Self, key: EntityId) void {
+    pub fn deleteKey(self: *Self, key: Key) void {
+        const list = self.entities.getPtr(key.id).?; // delete key
+        const index = key.getIndex(list.items).?; // delete key
+        const entity = list.swapRemove(index);
+        const bucket = self.archetypes.getPtr(entity.type);
+
+        if (bucket.remove(entity.index)) |moved_key| {
+            const old_index = bucket.len;
+            const moved = self.entities.getPtr(moved_key).?; // 404
+
+            for (moved.items) |*item| {
+                if (item.index == old_index and item.type == entity.type) {
+                    item.index = entity.index;
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn delete(self: *Self, gpa: Allocator, key: EntityId) void {
         self.manager.delete(key);
 
-        const entry = self.entities.fetchRemove(key).?; // delete
-        const bucket = self.archetypes.getPtr(entry.value.type).?; // delete
+        var entry = self.entities.fetchRemove(key).?; // delete
+        defer entry.value.deinit(gpa);
 
-        if (bucket.remove(entry.value.index)) |moved_key| {
-            const moved = self.entities.getPtr(moved_key).?; // 404
-            moved.index = entry.value.index;
+        for (entry.value.items) |entity| {
+            const bucket = self.archetypes.getPtr(entity.type).?; // delete
+
+            if (bucket.remove(entity.index)) |moved_key| {
+                const old_index = bucket.len;
+                const moved = self.entities.getPtr(moved_key).?; // 404
+
+                for (moved.items) |*item| {
+                    if (item.index == old_index and item.type == entity.type) {
+                        item.index = entity.index;
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -871,44 +1009,46 @@ Evaluating systems involves traversing all buckets containing
                 try system.begin(context);
             }
 
-            var it = self.archetypes.iterator();
-            while (it.next()) |entry| {
-                const archetype = entry.key_ptr.*;
-                const bucket = entry.value_ptr;
-                if (archetype.contains(shape)) {
-                    if (bucket.len == 0) continue;
+            if (@hasDecl(System, "update")) {
+                var it = self.archetypes.iterator();
+                while (it.next()) |entry| {
+                    const archetype = entry.key_ptr.*;
+                    const bucket = entry.value_ptr;
+                    if (archetype.contains(shape)) {
+                        if (bucket.len == 0) continue;
 
-                    const components = bucket.components;
+                        const components = bucket.components;
 
-                    const context: UpdateContext = .{
-                        .gpa = gpa,
-                        .arena = arena,
-                        .model = self,
-                        .type = archetype,
-                        .entities = bucket.entities.items,
-                        .bucket = bucket,
-                    };
+                        const context: UpdateContext = .{
+                            .gpa = gpa,
+                            .arena = arena,
+                            .model = self,
+                            .type = archetype,
+                            .entities = bucket.entities.items,
+                            .bucket = bucket,
+                        };
 
-                    var tuple: Tuple = undefined;
-                    tuple[0] = system;
+                        var tuple: Tuple = undefined;
+                        tuple[0] = system;
 
-                    comptime var parameter: comptime_int = 1;
-                    inline for (inputs) |tag| {
-                        const Type = meta.fieldInfo(T, tag).field_type;
-                        if (Type != void) {
-                            const i = archetype.index(tag);
-                            const component = &components[i].cast(Type).data;
-                            tuple[parameter] = component;
-                            parameter += 1;
+                        comptime var parameter: comptime_int = 1;
+                        inline for (inputs) |tag| {
+                            const Type = meta.fieldInfo(T, tag).field_type;
+                            if (Type != void) {
+                                const i = archetype.index(tag);
+                                const component = &components[i].cast(Type).data;
+                                tuple[parameter] = component;
+                                parameter += 1;
+                            }
                         }
+
+                        tuple[parameter] = context;
+                        const options = .{};
+                        ret = @call(options, function, tuple);
                     }
 
-                    tuple[parameter] = context;
-                    const options = .{};
-                    ret = @call(options, function, tuple);
+                    try ret;
                 }
-
-                try ret;
             }
 
             if (@hasDecl(System, "end")) {
@@ -923,7 +1063,7 @@ Evaluating systems involves traversing all buckets containing
         }
     }
 
-# Tests
+# Examples
 
     lang: zig esc: none tag: #AECS - Testing
     ----------------------------------------
@@ -962,10 +1102,11 @@ Evaluating systems involves traversing all buckets containing
         var game: Database = .{};
         defer game.deinit(gpa);
 
-        const player = try game.insert(gpa, Data, .{ .health = .{ .hp = 100 } });
-        defer game.delete(player);
+        const player = try game.insert(gpa, .{}, Data, .{ .health = .{ .hp = 100 } });
+        defer game.delete(gpa, player.id);
 
         try game.remove(gpa, player, Database.Archetype.init(&.{.health}));
 
         try game.step(gpa, &systems);
     }
+

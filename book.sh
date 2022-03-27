@@ -3,13 +3,16 @@
 echo extracting source files ------------------------------------------
 zangle tangle *.md
 echo running tests ----------------------------------------------------
-zangle ls *.md | sed -e '/\.uml/d' -e '/\.asy/d' | while read -r l; do zig test $l; done
+zig build test
+echo building the game ------------------------------------------------
+zig build --prominent-compile-errors
 echo generating diagrams ----------------------------------------------
 find uml/ -name '*.uml' -exec plantuml {} \;
 find uml/ -name '*.asy' -exec asy -o uml/img/ {} \;
 echo building pdf -----------------------------------------------------
 mkdir -p tmp
-find . -name '*.md' | while read -r l; do \
+rm tmp/*.pdf
+ls *.md | while read -r l; do \
     sed -e '/    ----*/d' \
         -e 's/^    lang.*tag: #\(.*\)$/\n\\vspace{0.6cm}\\footnotesize\\centerline{\n\\underline{\1}\n}\n\\normalsize\\vspace{0.2cm}/' \
         -e 's/^    lang.*file: \(.*\)$/\n\\vspace{0.6cm}\\footnotesize\\centerline{\n\\underline{\1}\n}\n\\normalsize\\vspace{0.2cm}/' \
@@ -20,5 +23,4 @@ find tmp/ -name '*.pdf' | xargs gs -q \
     -dNOPAUSE -dBATCH \
     -sDEVICE=pdfwrite \
     -sOutputFile=book.pdf
-rm tmp/*.pdf
 echo done -------------------------------------------------------------

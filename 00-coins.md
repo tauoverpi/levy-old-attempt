@@ -8,6 +8,7 @@ title: L.E.V.Y - coins
     const std = @import("std");
     const lib = @import("lib.zig");
     const raylib = @cImport(@cInclude("raylib.h"));
+    const math = std.math;
 
     const Array = std.MultiArrayList;
     const ArrayList = std.ArrayListUnmanaged;
@@ -23,9 +24,9 @@ title: L.E.V.Y - coins
         coin: void,
         input: void,
 
-        pub const Point2D = struct { x: f32, y: f32 };
-        pub const Vector2D = struct { x: f32, y: f32 };
-        pub const Circle2D = struct { r: f32 };
+        pub const Point2D = struct { x: i32, y: i32 };
+        pub const Vector2D = struct { x: i32, y: i32 };
+        pub const Circle2D = struct { r: i32 };
     };
 
     const width = 720;
@@ -43,7 +44,7 @@ title: L.E.V.Y - coins
         var generator = std.rand.DefaultPrng.init(0xdeadbeefcafebabe);
         const rng = generator.random();
 
-        _ = try game.insert(gpa, template.Player, .{
+        _ = try game.insert(gpa, .{}, template.Player, .{
             .position = .{ .x = width / 2, .y = height / 2 },
             .position_next = .{ .x = width / 2, .y = height / 2 },
         });
@@ -51,11 +52,11 @@ title: L.E.V.Y - coins
         {
             var index: u32 = 0;
             while (index < 10) : (index += 1) {
-                const x = 5 + @intToFloat(f32, rng.uintLessThan(u32, width - 20));
-                const y = 5 + @intToFloat(f32, rng.uintLessThan(u32, height - 20));
+                const x = 5 + rng.intRangeLessThan(i32, 0, width - 20);
+                const y = 5 + rng.intRangeLessThan(i32, 0, height - 20);
                 const point = .{ .x = x, .y = y };
 
-                _ = try game.insert(gpa, template.Coin, .{
+                _ = try game.insert(gpa, .{}, template.Coin, .{
                     .position = point,
                 });
             }
@@ -77,8 +78,8 @@ title: L.E.V.Y - coins
 
             for (systems.render.scene.items) |item| {
                 const rect: raylib.Rectangle = .{
-                    .x = item.x,
-                    .y = item.y,
+                    .x = math.lossyCast(f32, item.x),
+                    .y = math.lossyCast(f32, item.y),
                     .width = 10,
                     .height = 10,
                 };
@@ -118,7 +119,7 @@ title: L.E.V.Y - coins
         const Tag = Model.Archetype.Tag;
 
         pub const Movement = struct {
-            delta: f32 = 1,
+            delta: i32 = 1,
 
             pub const inputs: []const Tag = &.{
                 .position_next,
@@ -140,8 +141,8 @@ title: L.E.V.Y - coins
                 const vy = velocity.items(.y);
 
                 for (context.entities) |_, index| {
-                    x[index] = @mulAdd(f32, vx[index], delta, x[index]);
-                    y[index] = @mulAdd(f32, vy[index], delta, y[index]);
+                    x[index] = vx[index] * delta + x[index];
+                    y[index] = vy[index] * delta + y[index];
                 }
             }
 
@@ -200,13 +201,13 @@ title: L.E.V.Y - coins
 
             pub fn update(self: *Input, context: Model.UpdateContext) !void {
                 if (context.get(.velocity)) |velocity| {
-                    var x: f32 = 0;
-                    var y: f32 = 0;
+                    var x: i32 = 0;
+                    var y: i32 = 0;
 
-                    if (self.key.up & 1 == 1) y -= 2.0;
-                    if (self.key.down & 1 == 1) y += 2.0;
-                    if (self.key.left & 1 == 1) x -= 2.0;
-                    if (self.key.right & 1 == 1) x += 2.0;
+                    if (self.key.up & 1 == 1) y -= 2;
+                    if (self.key.down & 1 == 1) y += 2;
+                    if (self.key.left & 1 == 1) x -= 2;
+                    if (self.key.right & 1 == 1) x += 2;
 
                     const vx = velocity.items(.x);
                     const vy = velocity.items(.y);
@@ -220,45 +221,6 @@ title: L.E.V.Y - coins
         };
 
         pub const Collision = struct {
-            quad: Quadtree(3) = .{},
-
-            pub fn Quadtree(comptime depth: usize) type {
-                comptime var size: usize = 0;
-
-                {
-                    comptime var order: usize = 1;
-                    comptime var index: usize = 0;
-
-                    comptime while (index < depth) : (index += 1) {
-                        size += order;
-                        order *= 4;
-                    };
-                }
-
-                return struct {
-                    tree: [size]ArrayList(Object) = [_]ArrayList(Object){.{}} ** size,
-
-                    const Self = @This();
-
-                    pub fn insert(self: *Self, gpa: Allocator, obj: Object) Allocator.Error!void {
-                        _ = gpa;
-                        _ = obj;
-
-                        var order: usize = 1;
-                        var index: usize = 0;
-                        var offset: usize = 0;
-                        while (index < depth) : (index += 1) {
-                            const level = self.tree[offset .. offset + order];
-
-                            _ = level;
-
-                            offset += order;
-                            order *= 4;
-                        }
-                    }
-                };
-            }
-
             pub const Object = struct {
                 position: Data.Point2D,
                 shape: Data.Circle2D,
@@ -270,6 +232,12 @@ title: L.E.V.Y - coins
                 .shape,
             };
 
+            pub fn begin(self: *Collision, context: Model.BeginContext) !void {
+                _ = context;
+                _ = self;
+                //self.quad.shrinkRetainingCapacity(0);
+            }
+
             pub fn update(
                 self: *Collision,
                 position: *const Array(Data.Point2D),
@@ -277,11 +245,11 @@ title: L.E.V.Y - coins
                 context: Model.UpdateContext,
             ) !void {
                 for (context.entities) |id, index| {
-                    try self.quad.insert(context.gpa, .{
-                        .position = position.get(index),
-                        .shape = shape.get(index),
-                        .id = id,
-                    });
+                    _ = self;
+                    _ = position;
+                    _ = shape;
+                    _ = id;
+                    _ = index;
                 }
             }
         };
@@ -294,9 +262,9 @@ title: L.E.V.Y - coins
             };
 
             pub const Object = struct {
-                x: f32,
-                y: f32,
-                z: f32,
+                x: i32,
+                y: i32,
+                z: i32,
             };
 
             pub fn begin(self: *Render, context: Model.BeginContext) !void {
@@ -311,7 +279,7 @@ title: L.E.V.Y - coins
             ) !void {
                 const x = position.items(.x);
                 const y = position.items(.y);
-                const z: f32 = if (context.type.has(.coin)) 1 else 0;
+                const z: i32 = if (context.type.has(.coin)) 1 else 0;
 
                 try self.scene.ensureUnusedCapacity(context.gpa, position.len);
 
