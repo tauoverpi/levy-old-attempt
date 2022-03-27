@@ -165,6 +165,26 @@ Each entity within the database has a shape given by the combination of it's com
         return self.intersection(other) == other;
     }
 
+    pub fn iterator(self: Archetype) Archetype.Iterator {
+        return .{ .type = self };
+    }
+
+    pub const Iterator = struct {
+        type: Archetype,
+
+        pub fn next(self: *Archetype.Iterator) ?Tag {
+            const int = @enumToInt(self.type);
+
+            if (int == 0) return null;
+
+            const tag = @intToEnum(Tag, @ctz(Int, int));
+
+            self.type = self.type.without(tag);
+
+            return tag;
+        }
+    };
+
 ## Deriving archetypes
 
     lang: zig esc: none tag: #AECS - Deriving archetypes
@@ -177,7 +197,7 @@ Each entity within the database has a shape given by the combination of it's com
     }
 
     /// Construct a new archetype without the given tag included in the set of active components
-    pub fn without(self: Archetype, tag: Tag) void {
+    pub fn without(self: Archetype, tag: Tag) Archetype {
         const mask = ~(@as(Int, 1) << @enumToInt(tag));
         return @intToEnum(Archetype, mask & @enumToInt(self));
     }
@@ -322,7 +342,7 @@ In combination with an index, archetypes are used to locate which bucket an enti
         }
     };
 
-## Database
+# Database
 
     lang: zig esc: [[]] tag: #AECS - Definition of an entity component store
     ------------------------------------------------------------------------
@@ -331,8 +351,11 @@ In combination with an index, archetypes are used to locate which bucket an enti
     pub fn Model(comptime T: type) type {
         return struct {
             manager: EntityManager = .{},
-            entities: std.AutoHashMapUnmanaged(EntityId, PointerList) = .{},
-            archetypes: std.AutoHashMapUnmanaged(Archetype, Storage) = .{},
+            entities: EntityMap = .{},
+            archetypes: BucketMap = .{},
+
+            const EntityMap = std.AutoHashMapUnmanaged(EntityId, PointerList);
+            const BucketMap = std.AutoHashMapUnmanaged(Archetype, Bucket);
 
             const Self = @This();
 
@@ -342,6 +365,7 @@ In combination with an index, archetypes are used to locate which bucket an enti
             [[AECS - Updating/adding components to entities]]
             [[AECS - Removing components from entities]]
             [[AECS - Deleting entities]]
+            [[AECS - Querying archetypes]]
             [[AECS - Running systems]]
 
             pub fn deinit(self: *Self, gpa: Allocator) void {
@@ -404,7 +428,7 @@ modify or remove individual entries.
     lang: zig esc: none tag: #AECS - The archetype storage container
     ----------------------------------------------------------------
 
-    pub const Storage = struct {
+    pub const Bucket = struct {
         len: u32 = 0,
         entities: std.ArrayListUnmanaged(EntityId) = .{},
         components: []Erased = &.{},
@@ -431,7 +455,7 @@ modify or remove individual entries.
             }
         };
 
-        pub fn reserve(self: *Storage, gpa: Allocator, key: EntityId) Allocator.Error!void {
+        pub fn reserve(self: *Bucket, gpa: Allocator, key: EntityId) Allocator.Error!void {
             var index: u32 = 0;
 
             try self.entities.append(gpa, key);
@@ -446,7 +470,7 @@ modify or remove individual entries.
             self.len += 1;
         }
 
-        pub fn remove(self: *Storage, index: u32) ?EntityId {
+        pub fn remove(self: *Bucket, index: u32) ?EntityId {
             const last = index + 1 == self.len;
 
             for (self.components) |erased| {
@@ -459,7 +483,7 @@ modify or remove individual entries.
             return if (last) null else self.entities.items[index];
         }
 
-        pub fn deinit(self: *Storage, gpa: Allocator) void {
+        pub fn deinit(self: *Bucket, gpa: Allocator) void {
             self.entities.deinit(gpa);
 
             for (self.components) |erased| {
@@ -486,7 +510,7 @@ statically known.
 
             pub const hash = std.hash.Wyhash.hash(0xdeadbeefcafebabe, @typeName(T));
 
-            const vtable: Storage.Erased.VTable = .{
+            const vtable: Bucket.Erased.VTable = .{
                 .resize = resize,
                 .shrink = shrink,
                 .remove = remove,
@@ -495,9 +519,9 @@ statically known.
 
             const Self = @This();
 
-            pub fn interface(self: *Self) Storage.Erased {
+            pub fn interface(self: *Self) Bucket.Erased {
                 return .{
-                    .base = @ptrCast(*Storage.Erased.Interface, self),
+                    .base = @ptrCast(*Bucket.Erased.Interface, self),
                     .vtable = &vtable,
                     .hash = hash,
                 };
@@ -509,23 +533,23 @@ statically known.
                 return self;
             }
 
-            fn resize(this: *Storage.Erased.Interface, gpa: Allocator, new_size: usize) Allocator.Error!void {
+            fn resize(this: *Bucket.Erased.Interface, gpa: Allocator, new_size: usize) Allocator.Error!void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
                 try self.data.ensureTotalCapacity(gpa, new_size);
                 self.data.len = new_size;
             }
 
-            fn shrink(this: *Storage.Erased.Interface, new_size: usize) void {
+            fn shrink(this: *Bucket.Erased.Interface, new_size: usize) void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
                 self.data.shrinkRetainingCapacity(new_size);
             }
 
-            fn remove(this: *Storage.Erased.Interface, index: u32) void {
+            fn remove(this: *Bucket.Erased.Interface, index: u32) void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
                 self.data.swapRemove(index);
             }
 
-            fn deinit(this: *Storage.Erased.Interface, gpa: Allocator) void {
+            fn deinit(this: *Bucket.Erased.Interface, gpa: Allocator) void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
                 self.data.deinit(gpa);
                 gpa.destroy(self);
@@ -734,10 +758,10 @@ statically known.
 
     fn migrateEntity(
         self: *Self,
-        bucket: *Storage,
+        bucket: *Bucket,
         archetype: Archetype,
         entity: Pointer,
-        old_bucket: *Storage,
+        old_bucket: *Bucket,
     ) void {
         if (archetype != .empty) {
             inline for (meta.fields(T)) |field, i| if (field.field_type != void) {
@@ -765,7 +789,7 @@ statically known.
         }
     }
 
-    fn createArchetype(self: *Self, gpa: Allocator, archetype: Archetype) Allocator.Error!*Storage {
+    fn createArchetype(self: *Self, gpa: Allocator, archetype: Archetype) Allocator.Error!*Bucket{
         const entry = try self.archetypes.getOrPut(gpa, archetype);
         errdefer _ = self.archetypes.remove(archetype);
 
@@ -775,7 +799,7 @@ statically known.
 
         bucket.* = .{};
 
-        bucket.components = try gpa.alloc(Storage.Erased, archetype.count());
+        bucket.components = try gpa.alloc(Bucket.Erased, archetype.count());
         errdefer gpa.free(bucket.components);
 
         var position: u16 = 0;
@@ -944,6 +968,88 @@ statically known.
         }
     }
 
+## Querying archetypes
+
+    lang: zig esc: [[]] tag: #AECS - Querying archetypes
+    ----------------------------------------------------
+
+    pub fn query(self: *Self, shape: Archetype) Iterator {
+        return .{ .type = shape, .it = self.archetypes.iterator() };
+    }
+
+    pub const Iterator = struct {
+        type: Archetype,
+        it: BucketMap.Iterator,
+
+        pub const Entry = struct {
+            bucket: *Bucket,
+            type: Archetype,
+
+            [[AECS - Getting component arrays from query results]]
+        };
+
+        pub fn next(self: *Iterator) ?Entry {
+            var bucket = self.it.next() orelse return null;
+
+            while (!bucket.key_ptr.contains(self.type)) {
+                bucket = self.it.next() orelse return null;
+            }
+
+            return Entry{
+                .bucket = bucket.value_ptr,
+                .type = bucket.key_ptr.*,
+            };
+        }
+    };
+
+### Getting component arrays from query results
+
+    lang: zig esc: none tag: #AECS - Getting component arrays from query results
+    ----------------------------------------------------------------------------
+
+    pub fn Arrays(comptime tags: Archetype) type {
+        var fields: [tags.count()]std.builtin.Type.StructField = undefined;
+
+        var it = tags.difference(Archetype.void_bits).iterator();
+        var index: u32 = 0;
+        while (it.next()) |tag| : (index += 1) {
+            const List = std.MultiArrayList(meta.fieldInfo(T, tag).field_type);
+            fields[index] = .{
+                .name = @tagName(tag),
+                .field_type = *List,
+                .alignment = @alignOf(List),
+                .default_value = null,
+                .is_comptime = false,
+            };
+        }
+
+        return @Type(.{ .Struct = .{
+            .layout = .Auto,
+            .fields = &fields,
+            .decls = &.{},
+            .is_tuple = false,
+        } });
+    }
+
+where
+
+    lang: zig esc: none tag: #AECS - Getting component arrays from query results
+    ----------------------------------------------------------------------------
+
+    pub fn arrays(self: Entry, comptime tags: Archetype) Arrays(tags) {
+        var r: Arrays(tags) = undefined;
+
+        inline for (meta.fields(Archetype.Tag)) |field| {
+            const tag = @field(Archetype.Tag, field.name);
+            if (tags.indexOf(tag)) |index| {
+                const Data = meta.fieldInfo(T, tag).field_type;
+                @field(r, field.name) = &self.bucket.components[index].cast(Data).data;
+            }
+        }
+
+        return r;
+    }
+
 ## Running systems
 
 Evaluating systems involves traversing all buckets containing
@@ -963,7 +1069,7 @@ Evaluating systems involves traversing all buckets containing
         model: *Self,
         type: Archetype,
         entities: []const EntityId,
-        bucket: *Storage,
+        bucket: *Bucket,
 
         pub fn get(
             self: UpdateContext,
@@ -1010,43 +1116,38 @@ Evaluating systems involves traversing all buckets containing
             }
 
             if (@hasDecl(System, "update")) {
-                var it = self.archetypes.iterator();
+                var it = self.query(shape);
                 while (it.next()) |entry| {
-                    const archetype = entry.key_ptr.*;
-                    const bucket = entry.value_ptr;
-                    if (archetype.contains(shape)) {
-                        if (bucket.len == 0) continue;
+                    if (entry.bucket.len == 0) continue;
 
-                        const components = bucket.components;
+                    const components = entry.bucket.components;
 
-                        const context: UpdateContext = .{
-                            .gpa = gpa,
-                            .arena = arena,
-                            .model = self,
-                            .type = archetype,
-                            .entities = bucket.entities.items,
-                            .bucket = bucket,
-                        };
+                    const context: UpdateContext = .{
+                        .gpa = gpa,
+                        .arena = arena,
+                        .model = self,
+                        .type = entry.type,
+                        .entities = entry.bucket.entities.items,
+                        .bucket = entry.bucket,
+                    };
 
-                        var tuple: Tuple = undefined;
-                        tuple[0] = system;
+                    var tuple: Tuple = undefined;
+                    tuple[0] = system;
 
-                        comptime var parameter: comptime_int = 1;
-                        inline for (inputs) |tag| {
-                            const Type = meta.fieldInfo(T, tag).field_type;
-                            if (Type != void) {
-                                const i = archetype.index(tag);
-                                const component = &components[i].cast(Type).data;
-                                tuple[parameter] = component;
-                                parameter += 1;
-                            }
+                    comptime var parameter: comptime_int = 1;
+                    inline for (inputs) |tag| {
+                        const Type = meta.fieldInfo(T, tag).field_type;
+                        if (Type != void) {
+                            const i = entry.type.index(tag);
+                            const component = &components[i].cast(Type).data;
+                            tuple[parameter] = component;
+                            parameter += 1;
                         }
-
-                        tuple[parameter] = context;
-                        const options = .{};
-                        ret = @call(options, function, tuple);
                     }
 
+                    tuple[parameter] = context;
+                    const options = .{};
+                    ret = @call(options, function, tuple);
                     try ret;
                 }
             }
@@ -1105,8 +1206,51 @@ Evaluating systems involves traversing all buckets containing
         const player = try game.insert(gpa, .{}, Data, .{ .health = .{ .hp = 100 } });
         defer game.delete(gpa, player.id);
 
+        try game.step(gpa, &systems);
         try game.remove(gpa, player, Database.Archetype.init(&.{.health}));
-
         try game.step(gpa, &systems);
     }
 
+## Systems by query
+
+    lang: zig esc: none tag: #AECS - Testing
+    ----------------------------------------
+
+    test {
+        const Data = struct {
+            health: Health,
+
+            pub const Health = struct { hp: u32 };
+        };
+
+        const Database = Model(Data);
+
+        const gpa = std.testing.allocator;
+        const System = struct {
+            const inputs = Database.Archetype.init(&.{.health});
+
+            pub fn update(self: *@This(), db: *Database) void {
+                _ = self;
+                var it = db.query(inputs);
+
+                while (it.next()) |entry| {
+                    const array = entry.arrays(inputs);
+                    const hp = array.health.items(.hp);
+
+                    for (hp) |*value| value.* = 1;
+                }
+            }
+        };
+
+        var system: System = .{};
+
+        var game: Database = .{};
+        defer game.deinit(gpa);
+
+        const player = try game.insert(gpa, .{}, Data, .{ .health = .{ .hp = 100 } });
+        defer game.delete(gpa, player.id);
+
+        system.update(&game);
+        try game.remove(gpa, player, Database.Archetype.init(&.{.health}));
+        system.update(&game);
+    }
