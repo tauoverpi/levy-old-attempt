@@ -493,9 +493,7 @@ modify or remove individual entries.
         }
     };
 
-Component arrays make use of MultiArrayList from the standard library which stores fields within a component as a
-structure of arrays. The `Component` interface is a wrapper over this to cover the cases when the type cannot be
-statically known.
+Component arrays make use of ArrayList from the standard library.
 
     lang: zig esc: none tag: #AECS - Component arrays
     -------------------------------------------------
@@ -505,7 +503,7 @@ statically known.
             @compileError("tried to construct a container for a 0-bit type " ++ @typeName(T));
         }
         return struct {
-            data: std.MultiArrayList(T) = .{},
+            data: std.ArrayListUnmanaged(T) = .{},
 
             pub const hash = std.hash.Wyhash.hash(0xdeadbeefcafebabe, @typeName(T));
 
@@ -535,7 +533,7 @@ statically known.
             fn resize(this: *Bucket.Erased.Interface, gpa: Allocator, new_size: usize) Allocator.Error!void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
                 try self.data.ensureTotalCapacity(gpa, new_size);
-                self.data.len = new_size;
+                self.data.items.len = new_size;
             }
 
             fn shrink(this: *Bucket.Erased.Interface, new_size: usize) void {
@@ -545,7 +543,7 @@ statically known.
 
             fn remove(this: *Bucket.Erased.Interface, index: u32) void {
                 const self = @ptrCast(*Self, @alignCast(@alignOf(Self), this));
-                self.data.swapRemove(index);
+                _ = self.data.swapRemove(index);
             }
 
             fn deinit(this: *Bucket.Erased.Interface, gpa: Allocator) void {
@@ -696,7 +694,7 @@ statically known.
                 const component = erased.cast(Data);
                 const value = @field(values, field.name);
 
-                component.data.set(new_index, value);
+                component.data.items[new_index] = value;
             };
         } else {
             inline for (info.fields) |field| if (field.field_type != void) {
@@ -706,7 +704,7 @@ statically known.
                 const component = erased.cast(Data);
                 const value = @field(values, field.name);
 
-                component.data.set(entity.index, value);
+                component.data.items[entity.index] = value;
             };
         }
     }
@@ -767,10 +765,10 @@ statically known.
                 const tag = @intToEnum(Archetype.Tag, i);
                 if (archetype.has(tag) and entity.type.has(tag)) {
                     const old_component = old_bucket.components[entity.type.index(tag)];
-                    const value = old_component.cast(field.field_type).data.get(entity.index);
+                    const value = old_component.cast(field.field_type).data.items[entity.index];
                     const erased = bucket.components[archetype.index(tag)];
                     const component = erased.cast(field.field_type);
-                    component.data.set(component.data.len - 1, value);
+                    component.data.items[component.data.items.len - 1] = value;
                 }
             };
         }
@@ -1012,11 +1010,11 @@ statically known.
         var it = tags.difference(Archetype.void_bits).iterator();
         var index: u32 = 0;
         while (it.next()) |tag| : (index += 1) {
-            const List = std.MultiArrayList(meta.fieldInfo(T, tag).field_type);
+            const Slice = []meta.fieldInfo(T, tag).field_type;
             fields[index] = .{
                 .name = @tagName(tag),
-                .field_type = *List,
-                .alignment = @alignOf(List),
+                .field_type = Slice,
+                .alignment = @alignOf(Slice),
                 .default_value = null,
                 .is_comptime = false,
             };
@@ -1038,13 +1036,25 @@ where
     pub fn arrays(self: Entry, comptime tags: Archetype) Arrays(tags) {
         var r: Arrays(tags) = undefined;
         const ty = comptime tags.difference(Archetype.void_bits);
+        if (!self.type.contains(ty)) {
+            if (is_debug) {
+                var it = ty.iterator();
+                while (it.next()) |tag| {
+                    if (!self.type.has(tag)) {
+                        std.debug.print("bucket missing requested tag {}\n", .{tag});
+                    }
+                }
+
+                @panic("invalid request for tags not present within the bucket");
+            }
+        }
 
         inline for (meta.fields(Archetype.Tag)) |field| {
             const tag = @field(Archetype.Tag, field.name);
             if (comptime ty.has(tag)) {
                 const index = self.type.index(tag);
                 const Data = meta.fieldInfo(T, tag).field_type;
-                @field(r, field.name) = &self.bucket.components[index].cast(Data).data;
+                @field(r, field.name) = self.bucket.components[index].cast(Data).data.items;
             }
         }
 
@@ -1054,10 +1064,10 @@ where
     pub fn get(
         self: Entry,
         comptime tag: Archetype.Tag,
-    ) ?*std.MultiArrayList(meta.fieldInfo(T, tag).field_type) {
+    ) ?[](meta.fieldInfo(T, tag).field_type) {
         const Data = meta.fieldInfo(T, tag).field_type;
         if (self.type.indexOf(tag)) |index| {
-            return &self.bucket.components[index].cast(Data).data;
+            return self.bucket.components[index].cast(Data).data.items;
         } else return null;
     }
 
@@ -1085,9 +1095,7 @@ where
 
                 while (it.next()) |entry| {
                     const array = entry.arrays(inputs);
-                    const hp = array.health.items(.hp);
-
-                    for (hp) |*value| value.* = 1;
+                    for (array.health) |*value| value.hp = 1;
                 }
             }
         };
