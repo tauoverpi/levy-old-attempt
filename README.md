@@ -6,9 +6,13 @@ abstract: |
 
 # Progress
 
+## Disparity Engine
+
 - [x] ECS
 - [ ] collision system
   - [ ] backed collision tree for static
+
+## Game mechanics
 
 # Introduction
 
@@ -16,9 +20,15 @@ abstract: |
     -------------------------------------
 
     pub const aecs = @import("aecs.zig");
+    pub const sort = @import("sort.zig");
+    pub const geometry = @import("geometry.zig");
+    // pub const kd = @import("kd.zig");
 
     comptime {
         _ = aecs;
+        _ = sort;
+        _ = geometry;
+        // _ = kd;
     }
 
 # Building
@@ -73,3 +83,7 @@ abstract: |
         const test_step = b.step("test", "run unit tests");
         test_step.dependOn(&lib.step);
     }
+
+# Map
+
+![Blocks](uml/img/map.png)
